@@ -1,5 +1,5 @@
-apiVersion: agentspec.orchestrator.dev/v1alpha1
-kind: SkillSpec
+apiVersion: agentspec.orchestrator.dev/v2alpha1
+kind: Skill
 metadata:
   key: code-review
 spec:

@@ -1,5 +1,5 @@
-apiVersion: agentspec.orchestrator.dev/v1alpha1
-kind: AutomationSpec
+apiVersion: agentspec.orchestrator.dev/v2alpha1
+kind: Automation
 metadata:
   key: triage-issues
 spec:
@@ -17,4 +17,3 @@ spec:
     workflowKey: default
     environmentKey: dev
     repoKey: app
-  integrationKey: github

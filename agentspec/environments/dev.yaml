@@ -1,5 +1,5 @@
-apiVersion: agentspec.orchestrator.dev/v1alpha1
-kind: EnvironmentSpec
+apiVersion: agentspec.orchestrator.dev/v2alpha1
+kind: Environment
 metadata:
   key: dev
 spec:
@@ -12,5 +12,5 @@ spec:
       - OPENAI_API_KEY
       - GITHUB_TOKEN
   toolPolicy:
-    allow: []
-    deny: []
+    preset: workspace-write
+    rules: []

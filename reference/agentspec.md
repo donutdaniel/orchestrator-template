@@ -15,14 +15,14 @@ agentspace-repo/
 │   │   └── *.yaml
 │   ├── environments/
 │   │   └── *.yaml
-│   ├── runtimes/
+│   ├── agents/
 │   │   └── *.yaml
 │   ├── skills/
 │   │   └── <skill-key>/
 │   │       ├── skill.yaml
 │   │       ├── SKILL.md
 │   │       └── <optional assets>
-│   ├── integrations/
+│   ├── connectors/
 │   │   └── *.yaml
 │   ├── tools/
 │   │   └── *.yaml
@@ -47,10 +47,11 @@ AgentSpec models desired state that the reconciler can validate and project into
 Prompt Markdown and custom tool code are executable runtime artifacts, so AgentSpec stores pointers
 and policy for them instead of inlining the content.
 
-- `RuntimeSpec.spec.promptPath` points to a prompt file committed in the agentspace repository.
-- `RuntimeSpec.spec.toolPolicy` and `EnvironmentSpec.spec.toolPolicy` control which tools can run.
-- `ToolSpec` declares tool contracts (integration, local, or builtin) with schema/risk metadata.
-- Local ToolSpecs (`spec.source=local`) point to runtime modules via `spec.modulePath`.
+- `Agent.spec.promptPath` points to a prompt file committed in the agentspace repository.
+- `Agent.spec.toolPolicy`, `Environment.spec.toolPolicy`, and `Connector.spec.toolPolicy`
+  control runtime permissions and approval behavior.
+- `Tool` declares tool contracts (connector, local, or builtin) with schema/risk metadata.
+- Local Tools (`spec.source=local`) point to runtime modules via `spec.modulePath`.
 - `tools/*.tool.ts|js|mjs` defines repo-local custom runtime tools loaded at runtime.
 
 This split is intentional:
@@ -64,11 +65,11 @@ This split is intentional:
 - Prompt files are required at reconcile time. Missing `spec.promptPath` defaults to `prompts/<role>.md`,
   and reconcile fails if the file is absent.
 - Runtime prompt content is loaded from the pinned agentspace checkout at run start (commit-pinned provenance).
-- Custom tool modules are loaded only from declared local ToolSpecs (`spec.source=local`) using
+- Custom tool modules are loaded only from declared local Tools (`spec.source=local`) using
   `spec.modulePath`.
 - `spec.modulePath` must reference an existing `*.tool.ts|js|mjs` file in the same agentspace commit.
 - Repo custom tools are loaded for orchestrator, delegator, and executor runs.
-- Only ToolSpec-declared local runtime tools are injected.
+- Only Tool-declared local runtime tools are injected.
 - Agent execution requires an explicit runtime prompt loaded from the agentspace repo; there is no
   in-code prompt fallback path.
 
@@ -77,7 +78,7 @@ This split is intentional:
 ```text
 agentspace-repo/
 ├── agentspec/
-│   ├── runtimes/
+│   ├── agents/
 │   │   └── executor-default.yaml
 │   └── tools/
 │       └── datadog-search-logs.yaml
@@ -87,11 +88,11 @@ agentspace-repo/
 │   └── summarize-workspace.tool.{ts,js,mjs}
 ```
 
-`agentspec/runtimes/executor-default.yaml`
+`agentspec/agents/executor-default.yaml`
 
 ```yaml
-apiVersion: agentspec.orchestrator.dev/v1alpha1
-kind: RuntimeSpec
+apiVersion: agentspec.orchestrator.dev/v2alpha1
+kind: Agent
 metadata:
   key: executor-default
 spec:
@@ -105,13 +106,13 @@ spec:
 `agentspec/tools/datadog-search-logs.yaml`
 
 ```yaml
-apiVersion: agentspec.orchestrator.dev/v1alpha1
-kind: ToolSpec
+apiVersion: agentspec.orchestrator.dev/v2alpha1
+kind: Tool
 metadata:
   key: datadog-search-logs
 spec:
-  source: integration
-  integrationKey: datadog
+  source: connector
+  connectorKey: datadog
   toolId: search_logs
   description: Search Datadog logs by query and time window.
   riskClass: read
@@ -120,8 +121,8 @@ spec:
 `agentspec/tools/summarize-workspace.yaml`
 
 ```yaml
-apiVersion: agentspec.orchestrator.dev/v1alpha1
-kind: ToolSpec
+apiVersion: agentspec.orchestrator.dev/v2alpha1
+kind: Tool
 metadata:
   key: summarize-workspace
 spec:
@@ -152,13 +153,15 @@ export default {
 };
 ```
 
+For canonical bundle shapes, see [reference/agentspec-bundles.md](./agentspec-bundles.md).
+
 ## File Format
 
 One resource per file. YAML with four top-level keys:
 
 ```yaml
-apiVersion: agentspec.orchestrator.dev/v1alpha1
-kind: RepoSpec
+apiVersion: agentspec.orchestrator.dev/v2alpha1
+kind: Repo
 metadata:
   key: my-app
 spec:
@@ -170,11 +173,27 @@ spec:
 
 | Field                  | Description                                                                                                                                        |
 | ---------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `apiVersion`           | Always `agentspec.orchestrator.dev/v1alpha1` for now.                                                                                              |
-| `kind`                 | Resource type. One of: `RepoSpec`, `EnvironmentSpec`, `RuntimeSpec`, `SkillSpec`, `ToolSpec`, `IntegrationSpec`, `WorkflowSpec`, `AutomationSpec`. |
+| `apiVersion`           | Always `agentspec.orchestrator.dev/v2alpha1`.                                                                                                      |
+| `kind`                 | Resource type. One of: `Repo`, `Environment`, `Agent`, `Skill`, `Tool`, `Connector`, `Workflow`, `Automation`.                                   |
 | `metadata.key`         | Stable identity key for this resource. Immutable after creation — renaming means delete + create. Must be unique within its kind per workspace.    |
 | `metadata.annotations` | Optional key-value pairs for lifecycle control (e.g., `orchestrator.dho.dev/prune: "true"`).                                                       |
 | `spec`                 | Kind-specific fields (see below).                                                                                                                  |
+
+## Projected Control Plane
+
+Every agentspec-managed row carries the same minimal control-plane fields:
+
+- `agentspecKey`
+- `agentspecPath`
+- `agentspecChecksum`
+- `agentspecReconcileStatus`
+- `agentspecPruneOnDelete`
+
+`agentspecReconcileStatus` is the only projected lifecycle state:
+
+- `ready` means the row matches the declared resource
+- `degraded` means the row exists but runtime prerequisites are incomplete
+- `orphaned` means the resource was removed from agentspec and intentionally retained
 
 ## Revision Model
 
@@ -211,8 +230,9 @@ Response includes:
 
 ## Lifecycle
 
-Resources removed from the agentspec are **orphaned by default** — suspended and disconnected from
-declarative management, but not deleted. This prevents accidental destruction of runtime state.
+Resources removed from the agentspec are **orphaned by default** — retained in the database but
+marked `orphaned` and excluded from declarative runtime selection. This prevents accidental
+destruction of runtime state.
 
 To opt into deletion:
 
@@ -226,17 +246,17 @@ Within a single reconcile pass, resources are applied in dependency order:
 1. Environments (no dependencies)
 2. Repos (no dependencies)
 3. Skills (no dependencies)
-4. Runtime specs (may reference environments)
-5. Tools (integration tools may reference integrations; local/builtin tools are standalone)
-6. Integrations (may reference environments, secret keys; project ToolSpecs into runtime tool definitions)
-7. Workflows (may reference runtime specs, integrations)
-8. Automations (may reference workflows, integrations, environments)
+4. Agent definitions (may reference environments)
+5. Tools (connector tools may reference connectors; local/builtin tools are standalone)
+6. Connectors (may reference environments and secret keys; project Tools into connector definitions and connectors)
+7. Workflows (may reference agent definitions, connectors)
+8. Automations (may reference workflows, connectors, environments)
 
 Within a tier, resources are applied in parallel.
 
 ---
 
-## RepoSpec
+## Repo
 
 Declares a repository the workspace operates on. Runtime auth, installation state, and token
 linkage remain in the database.
@@ -244,8 +264,8 @@ linkage remain in the database.
 **File location:** `agentspec/repos/<key>.yaml`
 
 ```yaml
-apiVersion: agentspec.orchestrator.dev/v1alpha1
-kind: RepoSpec
+apiVersion: agentspec.orchestrator.dev/v2alpha1
+kind: Repo
 metadata:
   key: app
 spec:
@@ -274,13 +294,14 @@ a delete + create.
 
 ### Runtime State (DB-only, not in agentspec)
 
-- Installation and auth resolution
-- Token linkage and credential references
+- Repository selection rows (`github_repositories`)
+- GitHub installation linkage (`githubInstallationId` on each GitHub repository)
+- Agentspace repo attachment (`agentspaces_repos.githubRepositoryId`)
 - Sync/bootstrap status and error state
 
 ---
 
-## EnvironmentSpec
+## Environment
 
 Declares an execution environment with network policy, tool policy overlays, and secret key
 requirements. Secret values are never in the agentspec — only the key names that must be present.
@@ -288,8 +309,8 @@ requirements. Secret values are never in the agentspec — only the key names th
 **File location:** `agentspec/environments/<key>.yaml`
 
 ```yaml
-apiVersion: agentspec.orchestrator.dev/v1alpha1
-kind: EnvironmentSpec
+apiVersion: agentspec.orchestrator.dev/v2alpha1
+kind: Environment
 metadata:
   key: dev
 spec:
@@ -305,11 +326,16 @@ spec:
       - OPENAI_API_KEY
       - REDIS_URL
   toolPolicy:
-    allow:
-      - github_*
-      - slack_*
-    deny:
-      - destructive_*
+    preset: workspace-write
+    rules:
+      - action: deny
+        selector:
+          kind: tool_pattern
+          pattern: bash
+      - action: ask
+        selector:
+          kind: browser
+          origin: https://github.com
 ```
 
 ### Fields
@@ -322,8 +348,8 @@ spec:
 | `spec.networkPolicy.allowedDomains` | string[]                                         | No       | `[]`                    | Domains allowed for egress (only when `egressMode: allowlist`).                                     |
 | `spec.networkPolicy.deniedDomains`  | string[]                                         | No       | `[]`                    | Domains blocked for egress (only when `egressMode: denylist`).                                      |
 | `spec.secrets.requiredKeys`         | string[]                                         | No       | `[]`                    | Secret key names that must have values set in the database before runs can use this environment.    |
-| `spec.toolPolicy.allow`             | string[]                                         | No       | `[]`                    | Glob patterns for allowed tools.                                                                    |
-| `spec.toolPolicy.deny`              | string[]                                         | No       | `[]`                    | Glob patterns for denied tools.                                                                     |
+| `spec.toolPolicy.preset`            | `"read-only"` \| `"workspace-write"` \| `"full-access"` | No       | `"workspace-write"`     | Baseline permission preset for the environment.                                                      |
+| `spec.toolPolicy.rules`             | `ToolPolicyRule[]`                               | No       | `[]`                    | Ordered overrides that `allow`, `ask`, or `deny` matching tool invocations.                         |
 | `spec.autonomyMode`                 | `"full"` \| `"agent-review"` \| `"human-review"` | No       | Inherited               | Environment-level git autonomy override.                                                            |
 
 ### Policy Inheritance
@@ -332,79 +358,96 @@ Environment specs inherit from workspace-level defaults. Fields explicitly set i
 workspace defaults. Omitted fields inherit. Workspace policy sets the ceiling — environment overrides
 cannot exceed it.
 
+`toolPolicy.rules` are evaluated in order. Selectors can target:
+
+- tool patterns (`{ kind: "tool_pattern", pattern: "browser_*" }`)
+- bash command prefixes
+- filesystem paths scoped to tool IDs
+- connector calls (`connectorId`, `toolId`, `method`, `pathPrefix`, `operationType`)
+- browser origins
+
 ### Runtime State (DB-only, not in agentspec)
 
 - Encrypted secret values (`environment_secrets` table)
 - Secret rotation timestamps
 - Runtime status and usage telemetry
+- Execution readiness: required secret keys must resolve before any runner can spawn in the environment
+- Sandbox egress enforcement: network policy filters dynamic outbound hosts at runner start
 
 ---
 
-## RuntimeSpec
+## Agent
 
-Declares runtime defaults for a specific agent role — model, harness, prompt path, and tool policy.
-Multiple runtime specs per role are supported; one must be designated as the default.
+Declares agent defaults for a specific role — model, harness, prompt path, and tool policy.
+Multiple agent definitions per role are supported; one must be designated as the default.
 
-**File location:** `agentspec/runtimes/<key>.yaml`
+**File location:** `agentspec/agents/<key>.yaml`
 
 ```yaml
-apiVersion: agentspec.orchestrator.dev/v1alpha1
-kind: RuntimeSpec
+apiVersion: agentspec.orchestrator.dev/v2alpha1
+kind: Agent
 metadata:
   key: executor-default
 spec:
   role: executor
   isDefault: true
   agentHarness: claude-code
-  model: claude-sonnet-4-5-20250929
+  model: claude-sonnet-4-6
   promptPath: prompts/executor.md
   toolPolicy:
-    allow:
-      - github_*
-    deny: []
+    preset: read-only
+    rules:
+      - action: allow
+        selector:
+          kind: tool_pattern
+          pattern: read_*
+      - action: ask
+        selector:
+          kind: command
+          toolId: bash
+          prefix: git status
 ```
 
 ### Fields
 
 | Field                   | Type                                                        | Required | Default             | Description                                                                                               |
 | ----------------------- | ----------------------------------------------------------- | -------- | ------------------- | --------------------------------------------------------------------------------------------------------- |
-| `spec.role`             | `"orchestrator"` \| `"delegator"` \| `"executor"`           | Yes      | —                   | Agent role this runtime spec applies to.                                                                  |
-| `spec.isDefault`        | boolean                                                     | No       | `false`             | Whether this is the default runtime spec for its role. Exactly one runtime spec per role must be default. |
+| `spec.role`             | `"orchestrator"` \| `"delegator"` \| `"executor"`           | Yes      | —                   | Agent role this definition applies to.                                                                    |
+| `spec.isDefault`        | boolean                                                     | No       | `false`             | Whether this is the default agent definition for its role. Exactly one agent definition per role must be default. |
 | `spec.agentHarness`     | `"general"` \| `"claude-code"` \| `"codex"` \| `"opencode"` | No       | `"general"`         | Runtime harness. `orchestrator` and `delegator` must use `general`. `executor` can use any value.         |
 | `spec.model`            | string                                                      | No       | Per-harness default | Model identifier. Must be valid for the selected harness.                                                 |
 | `spec.promptPath`       | string                                                      | No       | `prompts/<role>.md` | Path to the prompt file, relative to agentspace repo root. File must exist.                               |
-| `spec.toolPolicy.allow` | string[]                                                    | No       | `[]`                | Glob patterns for allowed tools.                                                                          |
-| `spec.toolPolicy.deny`  | string[]                                                    | No       | `[]`                | Glob patterns for denied tools.                                                                           |
+| `spec.toolPolicy.preset` | `"read-only"` \| `"workspace-write"` \| `"full-access"` | No       | `"workspace-write"` | Baseline permission preset for this runtime.                                                              |
+| `spec.toolPolicy.rules`  | `ToolPolicyRule[]`                                       | No       | `[]`                | Ordered allow/ask/deny overrides evaluated after the preset baseline.                                     |
 
 ### Harness Constraints
 
 | Harness       | Roles                             | Available Models                                                                                                                     |
 | ------------- | --------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
-| `general`     | orchestrator, delegator, executor | `claude-sonnet-4-5-20250929`, `claude-opus-4-6`, `claude-haiku-4-5-20251001`, `gpt-5.2`, `gpt-5.2-codex`, `gpt-5-mini`, `gpt-5-nano` |
-| `claude-code` | executor only                     | `claude-sonnet-4-5-20250929`, `claude-opus-4-6`, `claude-haiku-4-5-20251001`                                                         |
-| `codex`       | executor only                     | `gpt-5.2`, `gpt-5.2-codex`, `gpt-5-mini`, `gpt-5-nano`                                                                               |
-| `opencode`    | executor only                     | `claude-sonnet-4-5-20250929`, `claude-opus-4-6`, `gpt-5.2`, `gpt-5-mini`, `gpt-5-nano`                                               |
+| `general`     | orchestrator, delegator, executor | `claude-sonnet-4-6`, `claude-opus-4-6`, `claude-haiku-4-5-20251001`, `gpt-5.4`, `gpt-5.4-codex`, `gpt-5.2`, `gpt-5.2-codex`, `gpt-5-mini`, `gpt-5-nano` |
+| `claude-code` | executor only                     | `claude-sonnet-4-6`, `claude-opus-4-6`, `claude-haiku-4-5-20251001`                                                         |
+| `codex`       | executor only                     | `gpt-5.4`, `gpt-5.4-codex`, `gpt-5.2`, `gpt-5.2-codex`, `gpt-5-mini`, `gpt-5-nano`                                                  |
+| `opencode`    | executor only                     | `claude-sonnet-4-6`, `claude-opus-4-6`, `gpt-5.4`, `gpt-5.2`, `gpt-5-mini`, `gpt-5-nano`                                    |
 
 ### Override Hierarchy
 
-When resolving runtime for a run:
+When resolving agent config for a run:
 
 1. **Run request** — most specific, wins if set
-2. **Runtime spec default** — inherited if run request omits the field
-3. **Workspace default** — fallback
+2. **Agent definition default** — inherited if run request omits the field
 
 Workspace policy enforces the ceiling. A run request for `model: claude-opus-4-6` is rejected if
-workspace policy caps at `claude-sonnet-4-5-20250929`.
+workspace policy caps at `claude-sonnet-4-6`.
 
 ### Runtime State (DB-only, not in agentspec)
 
-- Projected runtimes used by run creation
-- Run-level provenance (`sourceCommitSha`, selected runtime key)
+- Projected agent definitions (`agent_definitions`) used by run creation
+- Run-level provenance (selected agent key, pinned agentspec SHA)
 - Execution state (runs, activities, outcomes)
 
 ---
 
-## SkillSpec
+## Skill
 
 Declares a skill — reusable procedural knowledge that agents can invoke during execution. Skills
 are a primary surface for agent-authored content. Unlike other resource types, skills do not require
@@ -413,8 +456,8 @@ DB projection — runtime loads them directly from the pinned agentspec checkout
 **File location:** `agentspec/skills/<key>/skill.yaml` (with `SKILL.md` alongside)
 
 ```yaml
-apiVersion: agentspec.orchestrator.dev/v1alpha1
-kind: SkillSpec
+apiVersion: agentspec.orchestrator.dev/v2alpha1
+kind: Skill
 metadata:
   key: code-review
 spec:
@@ -438,7 +481,7 @@ spec:
 | `spec.description`                 | string                      | Yes      | —             | What the skill does.                                                                                                                                                          |
 | `spec.tags`                        | string[]                    | No       | `[]`          | Tags for categorization and discovery.                                                                                                                                        |
 | `spec.contentRoot`                 | string                      | No       | `"."`         | Directory containing skill content, relative to the skill.yaml file.                                                                                                          |
-| `spec.exposurePolicy.scope`        | `"workspace"` \| `"global"` | No       | `"workspace"` | Visibility scope. `global` skills are available across workspaces in the organization.                                                                                        |
+| `spec.exposurePolicy.scope`        | `"workspace"`               | No       | `"workspace"` | Visibility scope. Cross-workspace `global` exposure is not part of the current runtime contract.                                                                              |
 | `spec.exposurePolicy.allowedRoles` | string[]                    | No       | All roles     | Which agent roles can use this skill.                                                                                                                                         |
 | `spec.source`                      | string                      | No       | —             | External source reference for shared skills (e.g., `github.com/org/shared-skills/code-review@v1.0`). If set, skill content is resolved from this reference at reconcile time. |
 
@@ -446,7 +489,7 @@ spec:
 
 ```
 agentspec/skills/code-review/
-├── skill.yaml          # SkillSpec metadata
+├── skill.yaml          # Skill metadata
 ├── SKILL.md            # Skill instructions (required)
 └── references/         # Optional supporting files
     └── checklist.md
@@ -472,71 +515,98 @@ optional in-memory cache keyed by commit SHA is allowed for performance.
 
 ---
 
-## IntegrationSpec
+## Connector
 
-Declares an external service integration — provider identity, credential requirements, and webhook
-capabilities. Tool contracts are declared separately via `ToolSpec`.
+Declares an external runtime connector for the workspace. `Connector` is the only creation
+surface for runtime connectors. Tool contracts are declared separately via `Tool`.
 
-**File location:** `agentspec/integrations/<key>.yaml`
+**File location:** `agentspec/connectors/<key>.yaml`
 
 ```yaml
-apiVersion: agentspec.orchestrator.dev/v1alpha1
-kind: IntegrationSpec
+apiVersion: agentspec.orchestrator.dev/v2alpha1
+kind: Connector
 metadata:
-  key: github
+  key: datadog
 spec:
-  provider: github
+  provider: datadog
   credentials:
     secretKeys:
-      - GITHUB_TOKEN
+      - DATADOG_API_KEY
+      - DATADOG_APP_KEY
+  toolPolicy:
+    preset: workspace-write
+    rules:
+      - action: ask
+        selector:
+          kind: connector
+          toolId: request
+          method: POST
   webhook:
     enabled: true
     events:
-      - issues.opened
-      - pull_request.opened
+      - monitors.alert
 ```
 
 ### Fields
 
-| Field                         | Type     | Required | Default | Description                                                                                          |
-| ----------------------------- | -------- | -------- | ------- | ---------------------------------------------------------------------------------------------------- |
-| `spec.provider`               | string   | Yes      | —       | Integration provider identifier (e.g., `github`, `slack`, `sentry`, `linear`).                       |
-| `spec.credentials.secretKeys` | string[] | No       | `[]`    | Secret key names required for this integration. Must be present in the active environment's secrets. |
-| `spec.webhook.enabled`        | boolean  | No       | `false` | Whether this integration receives webhooks.                                                          |
-| `spec.webhook.events`         | string[] | No       | `[]`    | Event types this integration subscribes to.                                                          |
+| Field                         | Type     | Required | Default | Description                                                                                                  |
+| ----------------------------- | -------- | -------- | ------- | ------------------------------------------------------------------------------------------------------------ |
+| `spec.provider`               | string   | Yes      | —       | Runtime connector provider identifier (e.g., `sentry`, `slack`, `datadog`, `linear`, `custom_api`, `mcp`). |
+| `spec.credentials.secretKeys` | string[] | No       | `[]`    | Environment secret keys required by this connector. The values are resolved only from `environment_secrets`. |
+| `spec.toolPolicy`             | `ToolPolicy` | No   | Inherited | Optional connector-scoped permission overrides applied when this connector is exposed at runtime.          |
+| `spec.webhook.enabled`        | boolean  | No       | `false` | Whether this connector receives webhook events.                                                              |
+| `spec.webhook.events`         | string[] | No       | `[]`    | Event types this connector subscribes to.                                                                    |
 
 ### Typed vs Generic Adapters
 
-- **Typed adapters** exist for high-use providers: GitHub, Slack, Sentry, Linear. These have
+- **Typed adapters** exist for high-use providers: Slack, Sentry, Linear, Datadog, PagerDuty.
+  These have
   provider-specific signature verification, payload normalization, and tool implementations.
 - **Generic adapter** handles everything else via configurable auth and webhook-in/API-out.
+- GitHub is not part of `Connector`. Repository access and app installs are modeled
+  separately as source-control bindings.
 
 ### Runtime State (DB-only, not in agentspec)
 
-- Connection and auth state (`workspace_integrations`, `integration_user_authorizations`)
+- Connector metadata and projected tool definitions (`connector_definitions`)
+- Connector instances and prerequisite status (`connectors`)
+- User-scoped OAuth accounts such as OpenAI (`user_accounts`)
 - Approval records and audit logs
-- Webhook verification secrets
+- Environment secret values (`environment_secrets`)
+
+### Reconcile Behavior
+
+Each `Connector` creates or updates:
+
+- one `connector_definitions` row that stores provider metadata, tool definitions, webhook config,
+  and required secret keys
+- one `connectors` row that stores workspace binding state, non-secret identifiers, and
+  prerequisite status
+
+Connector creation is never blocked by missing secrets. Reconcile materializes the connector and
+marks it `pending_prereqs` until environment secrets and any required non-secret bindings are
+present.
 
 ---
 
-## ToolSpec
+## Tool
 
-Declares a tool contract. ToolSpecs can model:
+Declares a tool contract. Tools can model:
 
-- integration-backed tools (projected into integration runtime tool definitions),
+- connector-backed tools (projected into runtime connector tool definitions),
 - repo-local runtime tools, and
 - builtin runtime tools.
 
 **File location:** `agentspec/tools/<key>.yaml`
 
 ```yaml
-apiVersion: agentspec.orchestrator.dev/v1alpha1
-kind: ToolSpec
+apiVersion: agentspec.orchestrator.dev/v2alpha1
+kind: Tool
 metadata:
   key: datadog-search-logs
 spec:
-  source: integration
-  integrationKey: datadog
+  source: connector
+  connectorKey: datadog
   toolId: search_logs
   name: Search Logs
   description: Search Datadog logs by query and time window.
@@ -554,8 +624,8 @@ spec:
 
 | Field                        | Type                                                                      | Required    | Default         | Description                                                                                                          |
 | ---------------------------- | ------------------------------------------------------------------------- | ----------- | --------------- | -------------------------------------------------------------------------------------------------------------------- |
-| `spec.source`                | `"integration"` \| `"local"` \| `"builtin"`                               | No          | `"integration"` | Tool source plane.                                                                                                   |
-| `spec.integrationKey`        | string                                                                    | Conditional | —               | Required when `spec.source=integration`. Must reference an existing `IntegrationSpec` key.                           |
+| `spec.source`                | `"connector"` \| `"local"` \| `"builtin"`                                 | No          | `"connector"`   | Tool source plane.                                                                                                   |
+| `spec.connectorKey`          | string                                                                    | Conditional | —               | Required when `spec.source=connector`. Must reference an existing `Connector` key.                                  |
 | `spec.modulePath`            | string                                                                    | Conditional | —               | Required when `spec.source=local`. Repo-relative path to a `*.tool.ts`, `*.tool.js`, or `*.tool.mjs` runtime module. |
 | `spec.toolId`                | string                                                                    | Yes         | —               | Runtime tool identifier within the selected source plane.                                                            |
 | `spec.name`                  | string                                                                    | No          | `spec.toolId`   | Human-readable tool name.                                                                                            |
@@ -564,8 +634,8 @@ spec:
 | `spec.writeApprovalRequired` | boolean                                                                   | No          | `true`          | Convenience risk toggle. `false` maps to `riskClass=read`, otherwise `write_irreversible`.                           |
 | `spec.inputSchema`           | object                                                                    | No          | —               | JSON-schema-like hint surfaced to runtime/tool UIs.                                                                  |
 | `spec.annotations`           | object                                                                    | No          | —               | Additional non-sensitive tool metadata.                                                                              |
-| `spec.method`                | `"GET"` \| `"POST"` \| `"PUT"` \| `"PATCH"` \| `"DELETE"`                 | No          | —               | Optional HTTP method hint (useful for dynamic/custom API integrations).                                              |
-| `spec.path`                  | string                                                                    | No          | —               | Optional API path hint (useful for dynamic/custom API integrations).                                                 |
+| `spec.method`                | `"GET"` \| `"POST"` \| `"PUT"` \| `"PATCH"` \| `"DELETE"`                 | No          | —               | Optional HTTP method hint (useful for dynamic/custom API connectors).                                                |
+| `spec.path`                  | string                                                                    | No          | —               | Optional API path hint (useful for dynamic/custom API connectors).                                                   |
 | `spec.remoteToolName`        | string                                                                    | No          | —               | Optional remote MCP tool identifier hint.                                                                            |
 
 ### Risk Resolution
@@ -573,29 +643,31 @@ spec:
 - If `spec.riskClass` is set, it wins.
 - Otherwise `spec.writeApprovalRequired: false` maps to `read`.
 - Otherwise the default is `write_irreversible`.
-- Do not set both `spec.riskClass` and `spec.writeApprovalRequired` in the same ToolSpec.
+- Do not set both `spec.riskClass` and `spec.writeApprovalRequired` in the same Tool.
 
 ### Runtime Behavior
 
-- Integration ToolSpecs (`spec.source=integration`) are grouped by `spec.integrationKey`.
-- The reconciler projects grouped integration ToolSpecs into the target `IntegrationSpec` runtime tool definitions.
-- Any integration ToolSpec change updates the owning integration's projected checksum, so reconcile detects drift.
-- Local/builtin ToolSpecs are validated and tracked as declarative tool metadata but are not projected into integration templates.
-- Builtin ToolSpecs are validated against the canonical built-in tool registry (`packages/constants/src/runtime-tools.ts`).
-- Runtime enforcement is opt-in for builtins: once at least one `spec.source=builtin` ToolSpec exists, undeclared built-in tools are denied at runtime via merged tool policy.
-- Local ToolSpecs are explicit runtime bindings: each declared local tool ID maps to exactly one declared module path, and only those modules are loaded.
+- Connector Tools (`spec.source=connector`) are grouped by `spec.connectorKey`.
+- The reconciler projects grouped connector Tools into the target `Connector`
+  connector definition tool set.
+- Any connector Tool change updates the owning connector's projected checksum, so reconcile detects drift.
+- Local/builtin Tools are validated and tracked as declarative tool metadata but are not
+  projected into runtime connectors.
+- Builtin Tools are validated against the canonical built-in tool registry (`packages/constants/src/runtime-tools.ts`).
+- Builtin Tools are explicit runtime bindings: undeclared built-in tools are denied at runtime via merged tool policy.
+- Local Tools are explicit runtime bindings: each declared local tool ID maps to exactly one declared module path, and only those modules are loaded.
 
 ---
 
-## WorkflowSpec
+## Workflow
 
 Declares a workflow — an ordered sequence of steps that a task or project follows during execution.
 
 **File location:** `agentspec/workflows/<key>.yaml`
 
 ```yaml
-apiVersion: agentspec.orchestrator.dev/v1alpha1
-kind: WorkflowSpec
+apiVersion: agentspec.orchestrator.dev/v2alpha1
+kind: Workflow
 metadata:
   key: default
 spec:
@@ -611,7 +683,7 @@ spec:
     - key: verify
       name: Verify
       agentRole: executor
-      runtimeKey: executor-thorough
+      agentKey: executor-thorough
 ```
 
 ### Fields
@@ -624,25 +696,26 @@ spec:
 | `spec.steps[].key`        | string                                            | Yes      | —            | Step identifier. Must be unique within the workflow.                               |
 | `spec.steps[].name`       | string                                            | Yes      | —            | Human-readable step name.                                                          |
 | `spec.steps[].agentRole`  | `"orchestrator"` \| `"delegator"` \| `"executor"` | No       | `"executor"` | Agent role that executes this step.                                                |
-| `spec.steps[].runtimeKey` | string                                            | No       | Role default | Override runtime spec for this step. Must reference an existing `RuntimeSpec` key. |
+| `spec.steps[].agentKey` | string                                              | No       | Role default | Override the role default for this step. Must reference an existing `Agent` key. |
 
 ### Runtime State (DB-only, not in agentspec)
 
+- Projected workflow definitions (`workflow_definitions`) used by task/project startup
 - Workflow instance snapshots per run
 - Step execution status and outcomes
-- Provenance (`sourceCommitSha`)
+- Pinned agentspec commit SHA on workflow instances
 
 ---
 
-## AutomationSpec
+## Automation
 
 Declares an automation — a trigger-to-task rule that creates work in response to events.
 
 **File location:** `agentspec/automations/<key>.yaml`
 
 ```yaml
-apiVersion: agentspec.orchestrator.dev/v1alpha1
-kind: AutomationSpec
+apiVersion: agentspec.orchestrator.dev/v2alpha1
+kind: Automation
 metadata:
   key: triage-issues
 spec:
@@ -660,7 +733,6 @@ spec:
     workflowKey: default
     environmentKey: dev
     repoKey: app
-  integrationKey: github
 ```
 
 ### Fields
@@ -671,16 +743,16 @@ spec:
 | `spec.description`           | string | No       | —                          | What this automation does.                                                                      |
 | `spec.trigger.type`          | string | Yes      | —                          | Trigger type. See trigger types below.                                                          |
 | `spec.trigger.config`        | object | Yes      | —                          | Trigger-specific configuration. Schema depends on `trigger.type`.                               |
-| `spec.target.workflowKey`    | string | No       | Workspace default workflow | Workflow to execute. Must reference an existing `WorkflowSpec` key.                             |
-| `spec.target.environmentKey` | string | No       | Default environment        | Environment to run in. Must reference an existing `EnvironmentSpec` key.                        |
-| `spec.target.repoKey`        | string | No       | —                          | Repository context for the task. Must reference an existing `RepoSpec` key.                     |
-| `spec.integrationKey`        | string | No       | —                          | Integration that provides the trigger events. Must reference an existing `IntegrationSpec` key. |
+| `spec.target.workflowKey`    | string | No       | Workspace default workflow | Workflow to execute. Must reference an existing `Workflow` key.                                 |
+| `spec.target.environmentKey` | string | No       | Default environment        | Environment to run in. Must reference an existing `Environment` key.                            |
+| `spec.target.repoKey`        | string | No       | —                          | Repository context for the task. Must reference an existing `Repo` key.                         |
+| `spec.connectorKey`          | string | No       | —                          | Runtime connector that provides the trigger events when the trigger comes from a runtime connector. Must reference an existing `Connector` key. Reconcile stores the resolved connector on `automations.connectorId`. |
 
 ### Trigger Types
 
 | Type                 | Config Fields                                                                              | Description                                                 |
 | -------------------- | ------------------------------------------------------------------------------------------ | ----------------------------------------------------------- |
-| `github_issue_label` | `labels: string[]`, `excludeLabels?: string[]`                                             | Fires when a GitHub issue is labeled with a matching label. |
+| `github_issue_label` | `labels: string[]`, `excludeLabels?: string[]`                                             | Fires when a GitHub issue is labeled with a matching label. Uses the target `Repo`, not a `Connector`. |
 | `cron`               | `schedule: string`, `prompt: string`                                                       | Fires on a cron schedule with a fixed prompt.               |
 | `sentry_exception`   | `minLevel: "error" \| "warning" \| "info"`, `excludePatterns?: string[]`                   | Fires on Sentry exceptions at or above the minimum level.   |
 | `datadog_alert`      | `minPriority?: "P1"-"P5"`, `includeTags?: string[]`, `excludePatterns?: string[]`          | Fires on Datadog alerts.                                    |
@@ -714,8 +786,8 @@ regardless of who authored it.
 
 Effective git autonomy for a repo/run resolves in this order:
 
-1. `RepoSpec.spec.autonomyMode`
-2. `EnvironmentSpec.spec.autonomyMode`
+1. `Repo.spec.autonomyMode`
+2. `Environment.spec.autonomyMode`
 3. `workspace.settings.agentspec.defaultAutonomyMode` (default is `human-review`)
 
 Executor enforcement by effective mode:
@@ -737,10 +809,10 @@ Managed configuration authoring is AgentSpec-only for:
 
 - repositories
 - environments (structure/policy/required keys; secret values remain DB-only)
-- runtime specs/prompts
+- agent definitions/prompts
 - skills
 - tools
-- integration templates
+- runtime connectors
 - workflows
 - automations
 
@@ -753,7 +825,7 @@ Annotations are optional key-value pairs on `metadata.annotations` that control 
 
 | Annotation                   | Values   | Description                                                                                                                        |
 | ---------------------------- | -------- | ---------------------------------------------------------------------------------------------------------------------------------- |
-| `orchestrator.dho.dev/prune` | `"true"` | Opt this resource into deletion when removed from the agentspec. Without this, removed resources are orphaned (suspended) instead. |
+| `orchestrator.dho.dev/prune` | `"true"` | Opt this resource into deletion when removed from the agentspec. Without this, removed resources are kept and marked `orphaned`. |
 
 ## What Is Not In the AgentSpec
 
@@ -761,18 +833,18 @@ Annotations are optional key-value pairs on `metadata.annotations` that control 
 | --------------------------- | --------------------------------------------- | ------------------------------------------------- |
 | Secret values               | `environment_secrets` table (encrypted)       | Secrets must never be in a git repository.        |
 | Runtime execution state     | Database (runs, activities, events, channels) | High-churn operational data, not authored config. |
-| Auth tokens and credentials | Database (integration tables)                 | Sensitive runtime state.                          |
+| User-scoped auth tokens     | `user_accounts` table                         | User-owned accounts like OpenAI are not declarative workspace config. |
+| Runtime connector secrets   | `environment_secrets` table (encrypted)       | Runtime connectors resolve secret values only from environment secrets. |
 | Approval records            | Database (audit tables)                       | Operational compliance records.                   |
 
-## Provenance
+## Projected Row Fields
 
-Projected rows (DB records created by the reconciler) include provenance fields for auditability:
+Projected rows (DB records created by the reconciler) include shared control-plane fields:
 
-| Field              | Description                                                      |
-| ------------------ | ---------------------------------------------------------------- |
-| `sourceKind`       | `"agentspace"` (from agentspec) or `"human"` (manually created). |
-| `sourceKey`        | The `metadata.key` from the spec.                                |
-| `sourcePath`       | File path within the agentspace repo.                            |
-| `sourceChecksum`   | Content hash of the spec file.                                   |
-| `sourceCommitSha`  | Commit SHA the spec was reconciled from.                         |
-| `sourceAuthorKind` | `"human"` or `"agent"` — who authored the commit.                |
+| Field             | Description                                                      |
+| ----------------- | ---------------------------------------------------------------- |
+| `agentspecKey`       | The `metadata.key` from the spec.                                |
+| `agentspecPath`      | File path within the agentspace repo.                            |
+| `agentspecChecksum`  | Content hash of the projected resource input.                    |
+| `agentspecReconcileStatus` | `ready`, `degraded`, or `orphaned`.                              |
+| `agentspecPruneOnDelete`   | Whether the row should be deleted instead of orphaned.           |

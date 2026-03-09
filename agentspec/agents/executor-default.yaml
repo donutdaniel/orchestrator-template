@@ -1,5 +1,5 @@
-apiVersion: agentspec.orchestrator.dev/v1alpha1
-kind: RuntimeSpec
+apiVersion: agentspec.orchestrator.dev/v2alpha1
+kind: Agent
 metadata:
   key: executor-default
 spec:
@@ -8,6 +8,3 @@ spec:
   agentHarness: codex
   model: gpt-5.2-codex
   promptPath: prompts/executor.md
-  toolPolicy:
-    allow: []
-    deny: []

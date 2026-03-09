@@ -1,5 +1,5 @@
-apiVersion: agentspec.orchestrator.dev/v1alpha1
-kind: WorkflowSpec
+apiVersion: agentspec.orchestrator.dev/v2alpha1
+kind: Workflow
 metadata:
   key: default
 spec:
@@ -9,12 +9,9 @@ spec:
     - key: plan
       name: Plan
       agentRole: executor
-      instructions: Clarify approach and constraints before editing files.
     - key: implement
       name: Implement
       agentRole: executor
-      instructions: Make scoped code changes and keep diffs focused.
     - key: verify
       name: Verify
       agentRole: executor
-      instructions: Run relevant checks and summarize evidence.

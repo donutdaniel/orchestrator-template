@@ -1,5 +1,5 @@
-apiVersion: agentspec.orchestrator.dev/v1alpha1
-kind: RuntimeSpec
+apiVersion: agentspec.orchestrator.dev/v2alpha1
+kind: Agent
 metadata:
   key: delegator-default
 spec:
@@ -8,6 +8,3 @@ spec:
   agentHarness: general
   model: gpt-5.2
   promptPath: prompts/delegator.md
-  toolPolicy:
-    allow: []
-    deny: []
