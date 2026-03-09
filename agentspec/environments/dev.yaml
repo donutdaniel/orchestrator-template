@@ -8,9 +8,7 @@ spec:
   networkPolicy:
     egressMode: open
   secrets:
-    requiredKeys:
-      - OPENAI_API_KEY
-      - GITHUB_TOKEN
+    requiredKeys: []
   toolPolicy:
     preset: workspace-write
     rules: []
