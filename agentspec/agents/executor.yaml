@@ -1,10 +1,10 @@
 apiVersion: agentspec.orchestrator.dev/v2alpha1
 kind: Agent
 metadata:
-  key: executor-default
+  key: executor
 spec:
   role: executor
   isDefault: true
   agentHarness: codex
-  model: gpt-5.2-codex
+  model: gpt-5.4-codex
   promptPath: prompts/executor.md

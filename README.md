@@ -33,9 +33,9 @@ Starter agentspace repository that follows the current AgentSpec layout used by 
 
 - Repo key: `app`
 - Environment key: `dev`
-- Agent keys: `orchestrator-default`, `delegator-default`, `executor-default`
+- Agent keys: `orchestrator`, `delegator`, `executor`
 - Workflow key: `default`
-- Tool keys: `browser-navigate`, `repo-summary`
+- Tool keys: `find-bugs`
 - Automation key: `triage-issues`
 - Skill key: `code-review`
 

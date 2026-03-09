@@ -1,10 +1,10 @@
 apiVersion: agentspec.orchestrator.dev/v2alpha1
 kind: Agent
 metadata:
-  key: orchestrator-default
+  key: orchestrator
 spec:
   role: orchestrator
   isDefault: true
   agentHarness: general
-  model: gpt-5.2
+  model: gpt-5.4
   promptPath: prompts/orchestrator.md
