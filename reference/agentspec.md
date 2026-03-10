@@ -11,6 +11,7 @@ mode controls how commits land (direct push vs PR review), not what can be writt
 ```
 agentspace-repo/
 ├── agentspec/
+│   ├── workspace.yaml
 │   ├── repos/
 │   │   └── *.yaml
 │   ├── environments/
@@ -78,44 +79,44 @@ This split is intentional:
 ```text
 agentspace-repo/
 ├── agentspec/
+│   ├── workspace.yaml
 │   ├── agents/
-│   │   └── executor-default.yaml
+│   │   └── executor.yaml
 │   └── tools/
-│       └── datadog-search-logs.yaml
+│       └── summarize-workspace.yaml
 ├── prompts/
 │   └── executor.md
 ├── tools/
-│   └── summarize-workspace.tool.{ts,js,mjs}
+│   └── summarize-workspace.tool.ts
 ```
 
-`agentspec/agents/executor-default.yaml`
+`agentspec/workspace.yaml`
+
+```yaml
+apiVersion: agentspec.orchestrator.dev/v2alpha1
+kind: Workspace
+metadata:
+  key: workspace
+spec:
+  git:
+    defaultAutonomyMode: human-review
+  toolPolicy:
+    preset: workspace-write
+```
+
+`agentspec/agents/executor.yaml`
 
 ```yaml
 apiVersion: agentspec.orchestrator.dev/v2alpha1
 kind: Agent
 metadata:
-  key: executor-default
+  key: executor
 spec:
   role: executor
   isDefault: true
   agentHarness: codex
-  model: gpt-5.2-codex
+  model: gpt-5.4-codex
   promptPath: prompts/executor.md
-```
-
-`agentspec/tools/datadog-search-logs.yaml`
-
-```yaml
-apiVersion: agentspec.orchestrator.dev/v2alpha1
-kind: Tool
-metadata:
-  key: datadog-search-logs
-spec:
-  source: connector
-  connectorKey: datadog
-  toolId: search_logs
-  description: Search Datadog logs by query and time window.
-  riskClass: read
 ```
 
 `agentspec/tools/summarize-workspace.yaml`
@@ -174,10 +175,13 @@ spec:
 | Field                  | Description                                                                                                                                        |
 | ---------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `apiVersion`           | Always `agentspec.orchestrator.dev/v2alpha1`.                                                                                                      |
-| `kind`                 | Resource type. One of: `Repo`, `Environment`, `Agent`, `Skill`, `Tool`, `Connector`, `Workflow`, `Automation`.                                   |
+| `kind`                 | Resource type. One of: `Workspace`, `Repo`, `Environment`, `Agent`, `Skill`, `Tool`, `Connector`, `Workflow`, `Automation`.                      |
 | `metadata.key`         | Stable identity key for this resource. Immutable after creation — renaming means delete + create. Must be unique within its kind per workspace.    |
 | `metadata.annotations` | Optional key-value pairs for lifecycle control (e.g., `orchestrator.dho.dev/prune: "true"`).                                                       |
 | `spec`                 | Kind-specific fields (see below).                                                                                                                  |
+
+`Workspace` is the only singleton resource. Every agentspace repository must include exactly one
+`Workspace` document at `agentspec/workspace.yaml`, and it must use `metadata.key: workspace`.
 
 ## Projected Control Plane
 
@@ -237,22 +241,89 @@ destruction of runtime state.
 To opt into deletion:
 
 - Per-resource: set annotation `orchestrator.dho.dev/prune: "true"` before removing the file
-- Per-workspace: enable `prunePolicy: enabled` in workspace settings
+- Per-workspace: set `Workspace.spec.lifecycle.prunePolicy: enabled`
+
+`Workspace` itself cannot be pruned. Removing `agentspec/workspace.yaml` is a validation error, not
+a delete request.
 
 ## Reconcile Ordering
 
 Within a single reconcile pass, resources are applied in dependency order:
 
-1. Environments (no dependencies)
-2. Repos (no dependencies)
-3. Skills (no dependencies)
-4. Agent definitions (may reference environments)
-5. Tools (connector tools may reference connectors; local/builtin tools are standalone)
-6. Connectors (may reference environments and secret keys; project Tools into connector definitions and connectors)
-7. Workflows (may reference agent definitions, connectors)
-8. Automations (may reference workflows, connectors, environments)
+1. Workspace (projects workspace defaults before any dependent resources)
+2. Environments (no dependencies)
+3. Repos (no dependencies)
+4. Skills (no dependencies)
+5. Agent definitions (may reference environments)
+6. Tools (connector tools may reference connectors; local/builtin tools are standalone)
+7. Connectors (may reference environments and secret keys; project Tools into connector definitions and connectors)
+8. Workflows (may reference agent definitions, connectors)
+9. Automations (may reference workflows, connectors, environments)
 
 Within a tier, resources are applied in parallel.
+
+---
+
+## Workspace
+
+Declares workspace-wide runtime defaults. This resource is required and singleton.
+
+**File location:** `agentspec/workspace.yaml`
+
+```yaml
+apiVersion: agentspec.orchestrator.dev/v2alpha1
+kind: Workspace
+metadata:
+  key: workspace
+spec:
+  instructions: Prefer small, reviewable changes.
+  git:
+    defaultAutonomyMode: agent-review
+  taskDefaults:
+    maxTaskRetries: 1
+    maxNestingDepth: 4
+  toolPolicy:
+    preset: workspace-write
+  lifecycle:
+    prunePolicy: enabled
+```
+
+### Fields
+
+| Field                            | Type                                             | Required | Default            | Description                                                                                       |
+| -------------------------------- | ------------------------------------------------ | -------- | ------------------ | ------------------------------------------------------------------------------------------------- |
+| `spec.instructions`              | string                                           | No       | —                  | Workspace-level guidance projected into runtime workspace settings.                               |
+| `spec.git.defaultAutonomyMode`   | `"full"` \| `"agent-review"` \| `"human-review"` | No       | `"human-review"`   | Workspace-level fallback git autonomy when repo and environment do not override it.              |
+| `spec.taskDefaults.maxTaskRetries` | integer                                        | No       | `0`                | Default retry budget for tasks when project or task settings do not override it.                 |
+| `spec.taskDefaults.maxNestingDepth` | integer                                       | No       | `3`                | Default maximum nesting depth for projects and tasks when no narrower override exists.           |
+| `spec.toolPolicy`                | `ToolPolicy`                                     | No       | `"workspace-write"` | Workspace permission baseline and reusable rules.                                                 |
+| `spec.lifecycle.prunePolicy`     | `"enabled"` \| `"disabled"`                      | No       | `"disabled"`       | Workspace-wide orphan handling for removed agentspec resources.                                   |
+
+### Projection Contract
+
+- `spec.instructions` -> `workspaces.settings.instructions`
+- `spec.git.defaultAutonomyMode` -> `workspaces.settings.agentspec.defaultAutonomyMode`
+- `spec.taskDefaults.maxTaskRetries` -> `workspaces.settings.maxTaskRetries`
+- `spec.taskDefaults.maxNestingDepth` -> `workspaces.settings.maxNestingDepth`
+- `spec.toolPolicy` -> `workspaces.settings.toolPolicy`
+- `spec.lifecycle.prunePolicy` -> `workspaces.settings.agentspec.prunePolicy`
+
+Runtime services still read the projected `workspaces` row, but declarative fields are authored in
+`agentspec/workspace.yaml`. Workspace display metadata such as `name` and `description` are edited
+directly in the UI and are not part of the agentspec contract.
+
+### Identity And Lifecycle
+
+- `metadata.key` is fixed to `workspace`
+- `agentspec/workspace.yaml` is required for every compile/reconcile
+- removing the file is invalid; there is no workspace delete-or-orphan flow in agentspec
+
+### Runtime State (DB-only, not in agentspec)
+
+- Workspace `id`, `shortId`, and organization linkage
+- Agentspace repo attachment and active/default branch metadata
+- Secrets, approval history, reconcile history, and other operational state
+- Runtime connector enablement/binding state
 
 ---
 
@@ -323,7 +394,6 @@ spec:
       - api.anthropic.com
   secrets:
     requiredKeys:
-      - OPENAI_API_KEY
       - REDIS_URL
   toolPolicy:
     preset: workspace-write
@@ -526,13 +596,12 @@ surface for runtime connectors. Tool contracts are declared separately via `Tool
 apiVersion: agentspec.orchestrator.dev/v2alpha1
 kind: Connector
 metadata:
-  key: datadog
+  key: my-mcp-server
 spec:
-  provider: datadog
+  provider: mcp
   credentials:
     secretKeys:
-      - DATADOG_API_KEY
-      - DATADOG_APP_KEY
+      - MCP_SERVER_API_KEY
   toolPolicy:
     preset: workspace-write
     rules:
@@ -541,17 +610,13 @@ spec:
           kind: connector
           toolId: request
           method: POST
-  webhook:
-    enabled: true
-    events:
-      - monitors.alert
 ```
 
 ### Fields
 
 | Field                         | Type     | Required | Default | Description                                                                                                  |
 | ----------------------------- | -------- | -------- | ------- | ------------------------------------------------------------------------------------------------------------ |
-| `spec.provider`               | string   | Yes      | —       | Runtime connector provider identifier (e.g., `sentry`, `slack`, `datadog`, `linear`, `custom_api`, `mcp`). |
+| `spec.provider`               | string   | Yes      | —       | Runtime connector provider identifier (e.g., `mcp`, `custom_api`).                                         |
 | `spec.credentials.secretKeys` | string[] | No       | `[]`    | Environment secret keys required by this connector. The values are resolved only from `environment_secrets`. |
 | `spec.toolPolicy`             | `ToolPolicy` | No   | Inherited | Optional connector-scoped permission overrides applied when this connector is exposed at runtime.          |
 | `spec.webhook.enabled`        | boolean  | No       | `false` | Whether this connector receives webhook events.                                                              |
@@ -559,10 +624,8 @@ spec:
 
 ### Typed vs Generic Adapters
 
-- **Typed adapters** exist for high-use providers: Slack, Sentry, Linear, Datadog, PagerDuty.
-  These have
-  provider-specific signature verification, payload normalization, and tool implementations.
-- **Generic adapter** handles everything else via configurable auth and webhook-in/API-out.
+- **MCP Server** connectors (`provider: mcp` or `mcp_server`) expose remote MCP tools at runtime.
+- **Custom API** connectors (`provider: custom_api`) provide configurable auth and webhook-in/API-out.
 - GitHub is not part of `Connector`. Repository access and app installs are modeled
   separately as source-control bindings.
 
@@ -603,21 +666,14 @@ Declares a tool contract. Tools can model:
 apiVersion: agentspec.orchestrator.dev/v2alpha1
 kind: Tool
 metadata:
-  key: datadog-search-logs
+  key: mcp-query
 spec:
   source: connector
-  connectorKey: datadog
-  toolId: search_logs
-  name: Search Logs
-  description: Search Datadog logs by query and time window.
+  connectorKey: my-mcp-server
+  toolId: query
+  name: Query
+  description: Run a query against the connected MCP server.
   riskClass: read
-  inputSchema:
-    query:
-      type: string
-    from:
-      type: string
-    to:
-      type: string
 ```
 
 ### Fields
@@ -654,7 +710,7 @@ spec:
 - Local/builtin Tools are validated and tracked as declarative tool metadata but are not
   projected into runtime connectors.
 - Builtin Tools are validated against the canonical built-in tool registry (`packages/constants/src/runtime-tools.ts`).
-- Builtin Tools are explicit runtime bindings: undeclared built-in tools are denied at runtime via merged tool policy.
+- Builtin runtime tools are always available — agentspec tool declarations are additive (grant connector/local tools), not restrictive for builtins.
 - Local Tools are explicit runtime bindings: each declared local tool ID maps to exactly one declared module path, and only those modules are loaded.
 
 ---
@@ -695,6 +751,7 @@ spec:
 | `spec.steps`              | StepEntry[]                                       | Yes      | —            | Ordered list of workflow steps.                                                    |
 | `spec.steps[].key`        | string                                            | Yes      | —            | Step identifier. Must be unique within the workflow.                               |
 | `spec.steps[].name`       | string                                            | Yes      | —            | Human-readable step name.                                                          |
+| `spec.steps[].instructions` | string                                          | No       | —            | Optional instructions or context for this step, passed to the executing agent.     |
 | `spec.steps[].agentRole`  | `"orchestrator"` \| `"delegator"` \| `"executor"` | No       | `"executor"` | Agent role that executes this step.                                                |
 | `spec.steps[].agentKey` | string                                              | No       | Role default | Override the role default for this step. Must reference an existing `Agent` key. |
 
@@ -792,9 +849,9 @@ Effective git autonomy for a repo/run resolves in this order:
 
 Executor enforcement by effective mode:
 
-- `full`: direct push to base branch, no PR
-- `agent-review`: task branch push + PR, workspace `autoMerge` honored
-- `human-review`: task branch push + PR, `autoMerge` forced `false`
+- `full`: direct push to base branch (no PR). Falls back to PR + auto-merge if branch protection blocks direct push.
+- `agent-review`: task branch push + PR with auto-merge enabled
+- `human-review`: task branch push + PR, no auto-merge (human must approve and merge)
 
 ## Operations
 
