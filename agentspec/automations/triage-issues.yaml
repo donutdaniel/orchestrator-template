@@ -16,4 +16,4 @@ spec:
   target:
     workflowKey: default
     environmentKey: dev
-    repoKey: app
+    # repo: your-org/your-repo  # optional: target a specific repo by fullName
