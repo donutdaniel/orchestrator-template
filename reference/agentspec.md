@@ -12,8 +12,6 @@ mode controls how commits land (direct push vs PR review), not what can be writt
 agentspace-repo/
 ├── agentspec/
 │   ├── workspace.yaml
-│   ├── repos/
-│   │   └── *.yaml
 │   ├── environments/
 │   │   └── *.yaml
 │   ├── agents/
@@ -162,20 +160,17 @@ One resource per file. YAML with four top-level keys:
 
 ```yaml
 apiVersion: agentspec.orchestrator.dev/v2alpha1
-kind: Repo
+kind: Environment
 metadata:
-  key: my-app
+  key: dev
 spec:
-  provider: github
-  owner: acme
-  name: platform
-  defaultBranch: main
+  isDefault: true
 ```
 
 | Field                  | Description                                                                                                                                        |
 | ---------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `apiVersion`           | Always `agentspec.orchestrator.dev/v2alpha1`.                                                                                                      |
-| `kind`                 | Resource type. One of: `Workspace`, `Repo`, `Environment`, `Agent`, `Skill`, `Tool`, `Connector`, `Workflow`, `Automation`.                      |
+| `kind`                 | Resource type. One of: `Workspace`, `Environment`, `Agent`, `Skill`, `Tool`, `Connector`, `Workflow`, `Automation`.                              |
 | `metadata.key`         | Stable identity key for this resource. Immutable after creation — renaming means delete + create. Must be unique within its kind per workspace.    |
 | `metadata.annotations` | Optional key-value pairs for lifecycle control (e.g., `orchestrator.dho.dev/prune: "true"`).                                                       |
 | `spec`                 | Kind-specific fields (see below).                                                                                                                  |
@@ -252,8 +247,7 @@ Within a single reconcile pass, resources are applied in dependency order:
 
 1. Workspace (projects workspace defaults before any dependent resources)
 2. Environments (no dependencies)
-3. Repos (no dependencies)
-4. Skills (no dependencies)
+3. Skills (no dependencies)
 5. Agent definitions (may reference environments)
 6. Tools (connector tools may reference connectors; local/builtin tools are standalone)
 7. Connectors (may reference environments and secret keys; project Tools into connector definitions and connectors)
@@ -327,48 +321,17 @@ directly in the UI and are not part of the agentspec contract.
 
 ---
 
-## Repo
+## Repositories
 
-Declares a repository the workspace operates on. Runtime auth, installation state, and token
-linkage remain in the database.
+Repositories are **not** declared in agentspec. They are auto-populated into `github_repositories`
+when the GitHub App is installed or repositories are added to an installation. Automations can
+target a specific repo via `target.repo` using the `owner/repo` fullName format.
 
-**File location:** `agentspec/repos/<key>.yaml`
+### Runtime State (DB-only)
 
-```yaml
-apiVersion: agentspec.orchestrator.dev/v2alpha1
-kind: Repo
-metadata:
-  key: app
-spec:
-  provider: github
-  owner: acme
-  name: platform
-  defaultBranch: main
-  autonomyMode: full
-```
-
-### Fields
-
-| Field                | Type                                             | Required | Default   | Description                                                                                          |
-| -------------------- | ------------------------------------------------ | -------- | --------- | ---------------------------------------------------------------------------------------------------- |
-| `spec.provider`      | `"github"`                                       | Yes      | —         | Git hosting provider. Only `github` is supported currently.                                          |
-| `spec.owner`         | string                                           | Yes      | —         | Repository owner (organization or user).                                                             |
-| `spec.name`          | string                                           | Yes      | —         | Repository name.                                                                                     |
-| `spec.defaultBranch` | string                                           | No       | `"main"`  | Default branch for cloning and PR targets.                                                           |
-| `spec.autonomyMode`  | `"full"` \| `"agent-review"` \| `"human-review"` | No       | Inherited | Repo-level override for git autonomy mode. If omitted, falls back to environment/workspace defaults. |
-
-### Identity
-
-`metadata.key` is the stable identity. If a repository is renamed or transferred on GitHub, update
-`spec.owner` and `spec.name` while keeping the same key — the reconciler sees this as an update, not
-a delete + create.
-
-### Runtime State (DB-only, not in agentspec)
-
-- Repository selection rows (`github_repositories`)
+- Repository rows (`github_repositories`) — auto-populated from GitHub App webhooks
 - GitHub installation linkage (`githubInstallationId` on each GitHub repository)
 - Agentspace repo attachment (`agentspaces_repos.githubRepositoryId`)
-- Sync/bootstrap status and error state
 
 ---
 
@@ -789,7 +752,7 @@ spec:
   target:
     workflowKey: default
     environmentKey: dev
-    repoKey: app
+    repo: acme/platform
 ```
 
 ### Fields
@@ -802,14 +765,14 @@ spec:
 | `spec.trigger.config`        | object | Yes      | —                          | Trigger-specific configuration. Schema depends on `trigger.type`.                               |
 | `spec.target.workflowKey`    | string | No       | Workspace default workflow | Workflow to execute. Must reference an existing `Workflow` key.                                 |
 | `spec.target.environmentKey` | string | No       | Default environment        | Environment to run in. Must reference an existing `Environment` key.                            |
-| `spec.target.repoKey`        | string | No       | —                          | Repository context for the task. Must reference an existing `Repo` key.                         |
+| `spec.target.repo`           | string | No       | —                          | Repository fullName (`owner/repo`) for the task. Must exist in workspace `github_repositories`. |
 | `spec.connectorKey`          | string | No       | —                          | Runtime connector that provides the trigger events when the trigger comes from a runtime connector. Must reference an existing `Connector` key. Reconcile stores the resolved connector on `automations.connectorId`. |
 
 ### Trigger Types
 
 | Type                 | Config Fields                                                                              | Description                                                 |
 | -------------------- | ------------------------------------------------------------------------------------------ | ----------------------------------------------------------- |
-| `github_issue_label` | `labels: string[]`, `excludeLabels?: string[]`                                             | Fires when a GitHub issue is labeled with a matching label. Uses the target `Repo`, not a `Connector`. |
+| `github_issue_label` | `labels: string[]`, `excludeLabels?: string[]`                                             | Fires when a GitHub issue is labeled with a matching label. Repo resolved from the webhook event payload. |
 | `cron`               | `schedule: string`, `prompt: string`                                                       | Fires on a cron schedule with a fixed prompt.               |
 | `sentry_exception`   | `minLevel: "error" \| "warning" \| "info"`, `excludePatterns?: string[]`                   | Fires on Sentry exceptions at or above the minimum level.   |
 | `datadog_alert`      | `minPriority?: "P1"-"P5"`, `includeTags?: string[]`, `excludePatterns?: string[]`          | Fires on Datadog alerts.                                    |
@@ -843,8 +806,7 @@ regardless of who authored it.
 
 Effective git autonomy for a repo/run resolves in this order:
 
-1. `Repo.spec.autonomyMode`
-2. `Environment.spec.autonomyMode`
+1. `Environment.spec.autonomyMode`
 3. `workspace.settings.agentspec.defaultAutonomyMode` (default is `human-review`)
 
 Executor enforcement by effective mode:
