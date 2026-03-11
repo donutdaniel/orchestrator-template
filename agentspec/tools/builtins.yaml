@@ -7,4 +7,4 @@ spec:
   toolId: "*"
   name: Built-in Tools
   description: Allow all built-in runtime tools (task management, codebase, browser, etc.)
-  riskClass: write
+  riskClass: write_irreversible
