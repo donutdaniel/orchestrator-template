@@ -15,5 +15,5 @@ spec:
         - wontfix
   target:
     workflowKey: default
-    environmentKey: dev
+    environmentKey: default
     # repo: your-org/your-repo  # optional: target a specific repo by fullName
