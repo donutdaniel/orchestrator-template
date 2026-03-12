@@ -47,8 +47,8 @@ Prompt Markdown and custom tool code are executable runtime artifacts, so AgentS
 and policy for them instead of inlining the content.
 
 - `Agent.spec.promptPath` points to a prompt file committed in the agentspace repository.
-- `Agent.spec.toolPolicy`, `Environment.spec.toolPolicy`, and `Connector.spec.toolPolicy`
-  control runtime permissions and approval behavior.
+- `Agent.spec.toolPolicy` and `Environment.spec.toolPolicy` control runtime permissions and
+  approval behavior via the tool policy chain.
 - `Tool` declares tool contracts (connector, local, or builtin) with schema/risk metadata.
 - Local Tools (`spec.source=local`) point to runtime modules via `spec.modulePath`.
 - `tools/*.tool.ts|js|mjs` defines repo-local custom runtime tools loaded at runtime.
@@ -99,7 +99,7 @@ spec:
   git:
     defaultAutonomyMode: human-review
   toolPolicy:
-    preset: workspace-write
+    preset: supervised
 ```
 
 `agentspec/agents/executor.yaml`
@@ -248,7 +248,7 @@ Within a single reconcile pass, resources are applied in dependency order:
 1. Workspace (projects workspace defaults before any dependent resources)
 2. Environments (no dependencies)
 3. Skills (no dependencies)
-5. Agent definitions (may reference environments)
+4. Agent definitions (may reference environments)
 6. Tools (connector tools may reference connectors; local/builtin tools are standalone)
 7. Connectors (may reference environments and secret keys; project Tools into connector definitions and connectors)
 8. Workflows (may reference agent definitions, connectors)
@@ -277,7 +277,7 @@ spec:
     maxTaskRetries: 1
     maxNestingDepth: 4
   toolPolicy:
-    preset: workspace-write
+    preset: supervised
   lifecycle:
     prunePolicy: enabled
 ```
@@ -290,7 +290,7 @@ spec:
 | `spec.git.defaultAutonomyMode`   | `"full"` \| `"agent-review"` \| `"human-review"` | No       | `"human-review"`   | Workspace-level fallback git autonomy when repo and environment do not override it.              |
 | `spec.taskDefaults.maxTaskRetries` | integer                                        | No       | `0`                | Default retry budget for tasks when project or task settings do not override it.                 |
 | `spec.taskDefaults.maxNestingDepth` | integer                                       | No       | `3`                | Default maximum nesting depth for projects and tasks when no narrower override exists.           |
-| `spec.toolPolicy`                | `ToolPolicy`                                     | No       | `"workspace-write"` | Workspace permission baseline and reusable rules.                                                 |
+| `spec.toolPolicy`                | `ToolPolicy`                                     | No       | `"supervised"` | Workspace permission baseline and reusable rules.                                                 |
 | `spec.lifecycle.prunePolicy`     | `"enabled"` \| `"disabled"`                      | No       | `"disabled"`       | Workspace-wide orphan handling for removed agentspec resources.                                   |
 
 ### Projection Contract
@@ -359,7 +359,7 @@ spec:
     requiredKeys:
       - REDIS_URL
   toolPolicy:
-    preset: workspace-write
+    preset: supervised
     rules:
       - action: deny
         selector:
@@ -381,17 +381,20 @@ spec:
 | `spec.networkPolicy.allowedDomains` | string[]                                         | No       | `[]`                    | Domains allowed for egress (only when `egressMode: allowlist`).                                     |
 | `spec.networkPolicy.deniedDomains`  | string[]                                         | No       | `[]`                    | Domains blocked for egress (only when `egressMode: denylist`).                                      |
 | `spec.secrets.requiredKeys`         | string[]                                         | No       | `[]`                    | Secret key names that must have values set in the database before runs can use this environment.    |
-| `spec.toolPolicy.preset`            | `"read-only"` \| `"workspace-write"` \| `"full-access"` | No       | `"workspace-write"`     | Baseline permission preset for the environment.                                                      |
+| `spec.toolPolicy.preset`            | `"supervised"` \| `"autonomous"` | No       | `"supervised"`     | Baseline permission preset for the environment.                                                      |
 | `spec.toolPolicy.rules`             | `ToolPolicyRule[]`                               | No       | `[]`                    | Ordered overrides that `allow`, `ask`, or `deny` matching tool invocations.                         |
 | `spec.autonomyMode`                 | `"full"` \| `"agent-review"` \| `"human-review"` | No       | Inherited               | Environment-level git autonomy override.                                                            |
 
-### Policy Inheritance
+### Tool Policy Chain
 
-Environment specs inherit from workspace-level defaults. Fields explicitly set in the spec override
-workspace defaults. Omitted fields inherit. Workspace policy sets the ceiling — environment overrides
-cannot exceed it.
+Tool policies resolve through a chain: **Workspace → Environment → Agent Definition**. Each layer
+can set a preset and/or rules. The most specific preset wins (last in chain). Rules accumulate
+across all layers and are evaluated in order; last matching rule wins.
 
-`toolPolicy.rules` are evaluated in order. Selectors can target:
+Additionally, the agentspec's Tool declarations generate implicit **deny** rules for any builtin
+tools not declared — this is a constraint, not a policy layer, and never sets a preset.
+
+`toolPolicy.rules` selectors can target:
 
 - tool patterns (`{ kind: "tool_pattern", pattern: "browser_*" }`)
 - bash command prefixes
@@ -428,7 +431,7 @@ spec:
   model: claude-sonnet-4-6
   promptPath: prompts/executor.md
   toolPolicy:
-    preset: read-only
+    preset: supervised
     rules:
       - action: allow
         selector:
@@ -450,7 +453,7 @@ spec:
 | `spec.agentHarness`     | `"general"` \| `"claude-code"` \| `"codex"` \| `"opencode"` | No       | `"general"`         | Runtime harness. `orchestrator` and `delegator` must use `general`. `executor` can use any value.         |
 | `spec.model`            | string                                                      | No       | Per-harness default | Model identifier. Must be valid for the selected harness.                                                 |
 | `spec.promptPath`       | string                                                      | No       | `prompts/<role>.md` | Path to the prompt file, relative to agentspace repo root. File must exist.                               |
-| `spec.toolPolicy.preset` | `"read-only"` \| `"workspace-write"` \| `"full-access"` | No       | `"workspace-write"` | Baseline permission preset for this runtime.                                                              |
+| `spec.toolPolicy.preset` | `"supervised"` \| `"autonomous"` | No       | `"supervised"` | Baseline permission preset for this runtime.                                                              |
 | `spec.toolPolicy.rules`  | `ToolPolicyRule[]`                                       | No       | `[]`                | Ordered allow/ask/deny overrides evaluated after the preset baseline.                                     |
 
 ### Harness Constraints
@@ -565,14 +568,6 @@ spec:
   credentials:
     secretKeys:
       - MCP_SERVER_API_KEY
-  toolPolicy:
-    preset: workspace-write
-    rules:
-      - action: ask
-        selector:
-          kind: connector
-          toolId: request
-          method: POST
 ```
 
 ### Fields
@@ -581,7 +576,6 @@ spec:
 | ----------------------------- | -------- | -------- | ------- | ------------------------------------------------------------------------------------------------------------ |
 | `spec.provider`               | string   | Yes      | —       | Runtime connector provider identifier (e.g., `mcp`, `custom_api`).                                         |
 | `spec.credentials.secretKeys` | string[] | No       | `[]`    | Environment secret keys required by this connector. The values are resolved only from `environment_secrets`. |
-| `spec.toolPolicy`             | `ToolPolicy` | No   | Inherited | Optional connector-scoped permission overrides applied when this connector is exposed at runtime.          |
 | `spec.webhook.enabled`        | boolean  | No       | `false` | Whether this connector receives webhook events.                                                              |
 | `spec.webhook.events`         | string[] | No       | `[]`    | Event types this connector subscribes to.                                                                    |
 
@@ -673,6 +667,7 @@ spec:
 - Local/builtin Tools are validated and tracked as declarative tool metadata but are not
   projected into runtime connectors.
 - Builtin Tools are validated against the canonical built-in tool registry (`packages/constants/src/runtime-tools.ts`).
+- Use `toolId: "*"` to allow all builtin tools without listing each one individually. Any other `toolId` must match an entry in the registry.
 - Builtin runtime tools are always available — agentspec tool declarations are additive (grant connector/local tools), not restrictive for builtins.
 - Local Tools are explicit runtime bindings: each declared local tool ID maps to exactly one declared module path, and only those modules are loaded.
 

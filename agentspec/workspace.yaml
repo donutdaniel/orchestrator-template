@@ -6,4 +6,4 @@ spec:
   git:
     defaultAutonomyMode: human-review
   toolPolicy:
-    preset: full-access
+    preset: autonomous

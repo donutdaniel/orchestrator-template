@@ -10,5 +10,5 @@ spec:
   secrets:
     requiredKeys: []
   toolPolicy:
-    preset: full-access
+    preset: autonomous
     rules: []

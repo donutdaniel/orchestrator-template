@@ -14,7 +14,7 @@ spec:
   git:
     defaultAutonomyMode: human-review
   toolPolicy:
-    preset: workspace-write
+    preset: supervised
 ```
 
 ## Single-Repo Product Workspace
