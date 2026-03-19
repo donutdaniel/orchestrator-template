@@ -6,5 +6,5 @@ spec:
   role: executor
   isDefault: true
   agentHarness: codex
-  model: gpt-5.4-codex
+  model: gpt-5.4
   promptPath: prompts/executor.md
