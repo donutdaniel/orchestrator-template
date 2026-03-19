@@ -113,7 +113,7 @@ spec:
   role: executor
   isDefault: true
   agentHarness: codex
-  model: gpt-5.4-codex
+  model: gpt-5.4
   promptPath: prompts/executor.md
 ```
 
@@ -460,9 +460,9 @@ spec:
 
 | Harness       | Roles                             | Available Models                                                                                                                     |
 | ------------- | --------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
-| `general`     | orchestrator, delegator, executor | `claude-sonnet-4-6`, `claude-opus-4-6`, `claude-haiku-4-5-20251001`, `gpt-5.4`, `gpt-5.4-codex`, `gpt-5.2`, `gpt-5.2-codex`, `gpt-5-mini`, `gpt-5-nano` |
+| `general`     | orchestrator, delegator, executor | `claude-sonnet-4-6`, `claude-opus-4-6`, `claude-haiku-4-5-20251001`, `gpt-5.4`, `gpt-5-codex`, `gpt-5.2`, `gpt-5.2-codex`, `gpt-5-mini`, `gpt-5-nano` |
 | `claude-code` | executor only                     | `claude-sonnet-4-6`, `claude-opus-4-6`, `claude-haiku-4-5-20251001`                                                         |
-| `codex`       | executor only                     | `gpt-5.4`, `gpt-5.4-codex`, `gpt-5.2`, `gpt-5.2-codex`, `gpt-5-mini`, `gpt-5-nano`                                                  |
+| `codex`       | executor only                     | `gpt-5.4`, `gpt-5-codex`, `gpt-5.2`, `gpt-5.2-codex`, `gpt-5-mini`, `gpt-5-nano`                                                    |
 | `opencode`    | executor only                     | `claude-sonnet-4-6`, `claude-opus-4-6`, `gpt-5.4`, `gpt-5.2`, `gpt-5-mini`, `gpt-5-nano`                                    |
 
 ### Override Hierarchy
