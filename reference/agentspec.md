@@ -25,13 +25,10 @@ agentspace-repo/
 │   │   └── *.yaml
 │   ├── tools/
 │   │   └── *.yaml
-│   ├── workflows/
-│   │   └── *.yaml
 │   └── automations/
 │       └── *.yaml
 ├── prompts/
 │   ├── orchestrator.md
-│   ├── delegator.md
 │   └── executor.md
 ├── tools/
 │   └── *.tool.{ts,js,mjs}
@@ -67,10 +64,13 @@ This split is intentional:
 - Custom tool modules are loaded only from declared local Tools (`spec.source=local`) using
   `spec.modulePath`.
 - `spec.modulePath` must reference an existing `*.tool.ts|js|mjs` file in the same agentspace commit.
-- Repo custom tools are loaded for orchestrator, delegator, and executor runs.
+- Repo custom tools are loaded for orchestrator and executor runs.
 - Only Tool-declared local runtime tools are injected.
 - Agent execution requires an explicit runtime prompt loaded from the agentspace repo; there is no
   in-code prompt fallback path.
+- Legacy `delegator` agents and `Workflow` resources are removed. Sync fails until you delete
+  old `agentspec/agents/delegator.yaml`, any `allowedRoles: [delegator]`, and
+  `agentspec/workflows/*.yaml`.
 
 ### Minimal Agentspace Example
 
@@ -170,7 +170,7 @@ spec:
 | Field                  | Description                                                                                                                                        |
 | ---------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `apiVersion`           | Always `agentspec.orchestrator.dev/v2alpha1`.                                                                                                      |
-| `kind`                 | Resource type. One of: `Workspace`, `Environment`, `Agent`, `Skill`, `Tool`, `Connector`, `Workflow`, `Automation`.                              |
+| `kind`                 | Resource type. One of: `Workspace`, `Environment`, `Agent`, `Skill`, `Tool`, `Connector`, `Automation`.                                          |
 | `metadata.key`         | Stable identity key for this resource. Immutable after creation — renaming means delete + create. Must be unique within its kind per workspace.    |
 | `metadata.annotations` | Optional key-value pairs for lifecycle control (e.g., `orchestrator.dho.dev/prune: "true"`).                                                       |
 | `spec`                 | Kind-specific fields (see below).                                                                                                                  |
@@ -251,8 +251,7 @@ Within a single reconcile pass, resources are applied in dependency order:
 4. Agent definitions (may reference environments)
 6. Tools (connector tools may reference connectors; local/builtin tools are standalone)
 7. Connectors (may reference environments and secret keys; project Tools into connector definitions and connectors)
-8. Workflows (may reference agent definitions, connectors)
-9. Automations (may reference workflows, connectors, environments)
+8. Automations (may reference connectors and environments)
 
 Within a tier, resources are applied in parallel.
 
@@ -448,9 +447,9 @@ spec:
 
 | Field                   | Type                                                        | Required | Default             | Description                                                                                               |
 | ----------------------- | ----------------------------------------------------------- | -------- | ------------------- | --------------------------------------------------------------------------------------------------------- |
-| `spec.role`             | `"orchestrator"` \| `"delegator"` \| `"executor"`           | Yes      | —                   | Agent role this definition applies to.                                                                    |
+| `spec.role`             | `"orchestrator"` \| `"executor"`                            | Yes      | —                   | Agent role this definition applies to.                                                                    |
 | `spec.isDefault`        | boolean                                                     | No       | `false`             | Whether this is the default agent definition for its role. Exactly one agent definition per role must be default. |
-| `spec.agentHarness`     | `"general"` \| `"claude-code"` \| `"codex"` \| `"opencode"` | No       | `"general"`         | Runtime harness. `orchestrator` and `delegator` must use `general`. `executor` can use any value.         |
+| `spec.agentHarness`     | `"general"` \| `"claude-code"` \| `"codex"` \| `"opencode"` | No       | `"general"`         | Runtime harness. `orchestrator` must use `general`. `executor` can use any value.                         |
 | `spec.model`            | string                                                      | No       | Per-harness default | Model identifier. Must be valid for the selected harness.                                                 |
 | `spec.promptPath`       | string                                                      | No       | `prompts/<role>.md` | Path to the prompt file, relative to agentspace repo root. File must exist.                               |
 | `spec.toolPolicy.preset` | `"supervised"` \| `"autonomous"` | No       | `"supervised"` | Baseline permission preset for this runtime.                                                              |
@@ -460,9 +459,9 @@ spec:
 
 | Harness       | Roles                             | Available Models                                                                                                                     |
 | ------------- | --------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
-| `general`     | orchestrator, delegator, executor | `claude-sonnet-4-6`, `claude-opus-4-6`, `claude-haiku-4-5-20251001`, `gpt-5.4`, `gpt-5-codex`, `gpt-5.2`, `gpt-5.2-codex`, `gpt-5-mini`, `gpt-5-nano` |
+| `general`     | orchestrator, executor            | `claude-sonnet-4-6`, `claude-opus-4-6`, `claude-haiku-4-5-20251001`, `gpt-5.4`, `gpt-5-codex`, `gpt-5.2`, `gpt-5.2-codex`, `gpt-5-mini`, `gpt-5-nano` |
 | `claude-code` | executor only                     | `claude-sonnet-4-6`, `claude-opus-4-6`, `claude-haiku-4-5-20251001`                                                         |
-| `codex`       | executor only                     | `gpt-5.4`, `gpt-5-codex`, `gpt-5.2`, `gpt-5.2-codex`, `gpt-5-mini`, `gpt-5-nano`                                                    |
+| `codex`       | executor only                     | `gpt-5.4`, `gpt-5-codex`, `gpt-5.2`, `gpt-5.2-codex`, `gpt-5-mini`, `gpt-5-nano`                                       |
 | `opencode`    | executor only                     | `claude-sonnet-4-6`, `claude-opus-4-6`, `gpt-5.4`, `gpt-5.2`, `gpt-5-mini`, `gpt-5-nano`                                    |
 
 ### Override Hierarchy
@@ -673,55 +672,6 @@ spec:
 
 ---
 
-## Workflow
-
-Declares a workflow — an ordered sequence of steps that a task or project follows during execution.
-
-**File location:** `agentspec/workflows/<key>.yaml`
-
-```yaml
-apiVersion: agentspec.orchestrator.dev/v2alpha1
-kind: Workflow
-metadata:
-  key: default
-spec:
-  name: Default Workflow
-  description: Standard task execution with verification.
-  steps:
-    - key: plan
-      name: Plan
-      agentRole: executor
-    - key: implement
-      name: Implement
-      agentRole: executor
-    - key: verify
-      name: Verify
-      agentRole: executor
-      agentKey: executor-thorough
-```
-
-### Fields
-
-| Field                     | Type                                              | Required | Default      | Description                                                                        |
-| ------------------------- | ------------------------------------------------- | -------- | ------------ | ---------------------------------------------------------------------------------- |
-| `spec.name`               | string                                            | Yes      | —            | Human-readable workflow name.                                                      |
-| `spec.description`        | string                                            | No       | —            | What this workflow is for.                                                         |
-| `spec.steps`              | StepEntry[]                                       | Yes      | —            | Ordered list of workflow steps.                                                    |
-| `spec.steps[].key`        | string                                            | Yes      | —            | Step identifier. Must be unique within the workflow.                               |
-| `spec.steps[].name`       | string                                            | Yes      | —            | Human-readable step name.                                                          |
-| `spec.steps[].instructions` | string                                          | No       | —            | Optional instructions or context for this step, passed to the executing agent.     |
-| `spec.steps[].agentRole`  | `"orchestrator"` \| `"delegator"` \| `"executor"` | No       | `"executor"` | Agent role that executes this step.                                                |
-| `spec.steps[].agentKey` | string                                              | No       | Role default | Override the role default for this step. Must reference an existing `Agent` key. |
-
-### Runtime State (DB-only, not in agentspec)
-
-- Projected workflow definitions (`workflow_definitions`) used by task/project startup
-- Workflow instance snapshots per run
-- Step execution status and outcomes
-- Pinned agentspec commit SHA on workflow instances
-
----
-
 ## Automation
 
 Declares an automation — a trigger-to-task rule that creates work in response to events.
@@ -745,7 +695,6 @@ spec:
       excludeLabels:
         - wontfix
   target:
-    workflowKey: default
     environmentKey: dev
     repo: acme/platform
 ```
@@ -758,7 +707,6 @@ spec:
 | `spec.description`           | string | No       | —                          | What this automation does.                                                                      |
 | `spec.trigger.type`          | string | Yes      | —                          | Trigger type. See trigger types below.                                                          |
 | `spec.trigger.config`        | object | Yes      | —                          | Trigger-specific configuration. Schema depends on `trigger.type`.                               |
-| `spec.target.workflowKey`    | string | No       | Workspace default workflow | Workflow to execute. Must reference an existing `Workflow` key.                                 |
 | `spec.target.environmentKey` | string | No       | Default environment        | Environment to run in. Must reference an existing `Environment` key.                            |
 | `spec.target.repo`           | string | No       | —                          | Repository fullName (`owner/repo`) for the task. Must exist in workspace `github_repositories`. |
 | `spec.connectorKey`          | string | No       | —                          | Runtime connector that provides the trigger events when the trigger comes from a runtime connector. Must reference an existing `Connector` key. Reconcile stores the resolved connector on `automations.connectorId`. |
@@ -827,7 +775,6 @@ Managed configuration authoring is AgentSpec-only for:
 - skills
 - tools
 - runtime connectors
-- workflows
 - automations
 
 Legacy create/update/delete/toggle UI/actions for those surfaces are retired with

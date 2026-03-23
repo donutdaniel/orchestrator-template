@@ -24,16 +24,18 @@ Use when one product repo owns the application and the default executor handles 
 ```text
 agentspec/
 ├── workspace.yaml
-├── repos/
-│   └── app.yaml
 ├── environments/
-│   └── dev.yaml
+│   └── default.yaml
 ├── agents/
 │   ├── orchestrator.yaml
-│   ├── delegator.yaml
 │   └── executor.yaml
-├── workflows/
-│   └── default.yaml
+├── skills/
+│   └── code-review/
+│       ├── skill.yaml
+│       └── SKILL.md
+├── tools/
+│   ├── builtins.yaml
+│   └── find-bugs.yaml
 └── automations/
     └── triage-issues.yaml
 ```
@@ -41,33 +43,37 @@ agentspec/
 Recommended defaults:
 
 - Use `workspace.yaml` for shared git defaults, task defaults, tool policy, and prune policy
-- One `Repo` with `autonomyMode: human-review`
 - One default `Environment` with the minimum required secret keys
 - One default `Agent` per role
-- One `Workflow` that keeps verification as an explicit final step
+- Declare builtin and local tools explicitly
+- Keep verification guidance in prompts, skills, and repo docs rather than declarative workflow steps
 
 ## Multi-Repo Engineering Workspace
 
-Use when orchestration spans several product or service repositories and repo-level autonomy varies.
+Use when orchestration spans several product or service repositories and repo targeting varies by
+task or automation.
 
 ```text
 agentspec/
 ├── workspace.yaml
-├── repos/
-│   ├── api.yaml
-│   ├── web.yaml
-│   └── infra.yaml
 ├── environments/
 │   ├── dev.yaml
 │   └── staging.yaml
 ├── agents/
 │   ├── orchestrator.yaml
-│   ├── delegator.yaml
 │   ├── executor.yaml
 │   └── executor-thorough.yaml
-├── workflows/
-│   ├── default.yaml
-│   └── incident-fix.yaml
+├── skills/
+│   ├── code-review/
+│   │   ├── skill.yaml
+│   │   └── SKILL.md
+│   └── incident-intake/
+│       ├── skill.yaml
+│       └── SKILL.md
+├── tools/
+│   ├── builtins.yaml
+│   ├── github-maintainer.yaml
+│   └── incident-lookup.yaml
 └── automations/
     └── incident-intake.yaml
 ```
@@ -75,6 +81,6 @@ agentspec/
 Recommended defaults:
 
 - Use `workspace.yaml` for shared autonomy defaults and reusable permission rules
-- Set repo-specific autonomy on each `Repo`
-- Use step-level `agentKey` overrides in `Workflow` for verification or review-heavy phases
+- Use specialized `Agent` definitions for verification-heavy or review-heavy tasks
+- Route automations to specific repositories with `target.repo` when needed
 - Keep connector credentials in environment secrets, never in connector bindings
