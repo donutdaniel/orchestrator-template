@@ -5,7 +5,7 @@ Starter agentspace repository that follows the current AgentSpec layout used by 
 ## What this template includes
 
 - `agentspec/` with starter specs for workspace, environments, agents, skills, tools, and automations
-- `prompts/` with role prompts (`orchestrator`, `delegator`, `executor`)
+- `prompts/` with role prompts (`orchestrator`, `executor`)
 - `tools/` for custom tool implementations
 - `reference/agentspec.md` with the full AgentSpec reference
 - `reference/agentspec-bundles.md` with canonical bundle shapes
@@ -35,7 +35,7 @@ Starter agentspace repository that follows the current AgentSpec layout used by 
 
 - Workspace key: `workspace`
 - Environment key: `default`
-- Agent keys: `orchestrator`, `delegator`, `executor`
+- Agent keys: `orchestrator`, `executor`
 - Tool keys: `builtins`, `find-bugs`
 - Automation key: `triage-issues`
 - Skill key: `code-review`

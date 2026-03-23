@@ -29,7 +29,6 @@ agentspace-repo/
 │       └── *.yaml
 ├── prompts/
 │   ├── orchestrator.md
-│   ├── delegator.md
 │   └── executor.md
 ├── tools/
 │   └── *.tool.{ts,js,mjs}
@@ -65,10 +64,13 @@ This split is intentional:
 - Custom tool modules are loaded only from declared local Tools (`spec.source=local`) using
   `spec.modulePath`.
 - `spec.modulePath` must reference an existing `*.tool.ts|js|mjs` file in the same agentspace commit.
-- Repo custom tools are loaded for orchestrator, delegator, and executor runs.
+- Repo custom tools are loaded for orchestrator and executor runs.
 - Only Tool-declared local runtime tools are injected.
 - Agent execution requires an explicit runtime prompt loaded from the agentspace repo; there is no
   in-code prompt fallback path.
+- Legacy `delegator` agents and `Workflow` resources are removed. Sync fails until you delete
+  old `agentspec/agents/delegator.yaml`, any `allowedRoles: [delegator]`, and
+  `agentspec/workflows/*.yaml`.
 
 ### Minimal Agentspace Example
 
@@ -445,9 +447,9 @@ spec:
 
 | Field                   | Type                                                        | Required | Default             | Description                                                                                               |
 | ----------------------- | ----------------------------------------------------------- | -------- | ------------------- | --------------------------------------------------------------------------------------------------------- |
-| `spec.role`             | `"orchestrator"` \| `"delegator"` \| `"executor"`           | Yes      | —                   | Agent role this definition applies to.                                                                    |
+| `spec.role`             | `"orchestrator"` \| `"executor"`                            | Yes      | —                   | Agent role this definition applies to.                                                                    |
 | `spec.isDefault`        | boolean                                                     | No       | `false`             | Whether this is the default agent definition for its role. Exactly one agent definition per role must be default. |
-| `spec.agentHarness`     | `"general"` \| `"claude-code"` \| `"codex"` \| `"opencode"` | No       | `"general"`         | Runtime harness. `orchestrator` and `delegator` must use `general`. `executor` can use any value.         |
+| `spec.agentHarness`     | `"general"` \| `"claude-code"` \| `"codex"` \| `"opencode"` | No       | `"general"`         | Runtime harness. `orchestrator` must use `general`. `executor` can use any value.                         |
 | `spec.model`            | string                                                      | No       | Per-harness default | Model identifier. Must be valid for the selected harness.                                                 |
 | `spec.promptPath`       | string                                                      | No       | `prompts/<role>.md` | Path to the prompt file, relative to agentspace repo root. File must exist.                               |
 | `spec.toolPolicy.preset` | `"supervised"` \| `"autonomous"` | No       | `"supervised"` | Baseline permission preset for this runtime.                                                              |
@@ -457,7 +459,7 @@ spec:
 
 | Harness       | Roles                             | Available Models                                                                                                                     |
 | ------------- | --------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
-| `general`     | orchestrator, delegator, executor | `claude-sonnet-4-6`, `claude-opus-4-6`, `claude-haiku-4-5-20251001`, `gpt-5.4`, `gpt-5-codex`, `gpt-5.2`, `gpt-5.2-codex`, `gpt-5-mini`, `gpt-5-nano` |
+| `general`     | orchestrator, executor            | `claude-sonnet-4-6`, `claude-opus-4-6`, `claude-haiku-4-5-20251001`, `gpt-5.4`, `gpt-5-codex`, `gpt-5.2`, `gpt-5.2-codex`, `gpt-5-mini`, `gpt-5-nano` |
 | `claude-code` | executor only                     | `claude-sonnet-4-6`, `claude-opus-4-6`, `claude-haiku-4-5-20251001`                                                         |
 | `codex`       | executor only                     | `gpt-5.4`, `gpt-5-codex`, `gpt-5.2`, `gpt-5.2-codex`, `gpt-5-mini`, `gpt-5-nano`                                       |
 | `opencode`    | executor only                     | `claude-sonnet-4-6`, `claude-opus-4-6`, `gpt-5.4`, `gpt-5.2`, `gpt-5-mini`, `gpt-5-nano`                                    |

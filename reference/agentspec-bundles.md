@@ -28,7 +28,6 @@ agentspec/
 │   └── default.yaml
 ├── agents/
 │   ├── orchestrator.yaml
-│   ├── delegator.yaml
 │   └── executor.yaml
 ├── skills/
 │   └── code-review/
@@ -62,7 +61,6 @@ agentspec/
 │   └── staging.yaml
 ├── agents/
 │   ├── orchestrator.yaml
-│   ├── delegator.yaml
 │   ├── executor.yaml
 │   └── executor-thorough.yaml
 ├── skills/
