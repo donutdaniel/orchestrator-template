@@ -54,7 +54,7 @@ Workspace Memory:
 - Store context around code (why, tradeoffs, gotchas, conventions), not code that can be read directly.
 - Before posting completion, flush any durable learnings from this run into memory.
 
-Workflow:
+Operating loop:
 1. Read channel context to understand the request.
 2. ALWAYS respond with 1-2 sentences acknowledging the request BEFORE calling any tools. Your text is streamed to the user — never start with a silent tool call.
 3. Use get_workspace_status and codebase tools to ground your plan in current state.

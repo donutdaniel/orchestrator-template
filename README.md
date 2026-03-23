@@ -4,7 +4,7 @@ Starter agentspace repository that follows the current AgentSpec layout used by 
 
 ## What this template includes
 
-- `agentspec/` with starter specs for workspace, repos, environments, agents, skills, tools, workflows, and automations
+- `agentspec/` with starter specs for workspace, environments, agents, skills, tools, and automations
 - `prompts/` with role prompts (`orchestrator`, `delegator`, `executor`)
 - `tools/` for custom tool implementations
 - `reference/agentspec.md` with the full AgentSpec reference
@@ -13,14 +13,13 @@ Starter agentspace repository that follows the current AgentSpec layout used by 
 ## Quick start
 
 1. Review `agentspec/workspace.yaml` for workspace-level defaults (autonomy mode, tool policy).
-2. Update `agentspec/repos/app.yaml` with your real GitHub owner/repo/branch.
-3. Set required secret keys in `agentspec/environments/dev.yaml` to match your workspace secrets.
-4. Adjust agent defaults in `agentspec/agents/*.yaml` (harness, model, prompt paths).
-5. Define tool contracts in `agentspec/tools/*.yaml` (connector/local/builtin) and align them with runtime tools.
-6. For local tools, set `spec.modulePath` to an existing `tools/*.tool.ts|js|mjs` module.
-7. Update `agentspec/workflows/default.yaml` to match your execution flow.
-8. Remove or edit starter tool/automation examples before production use.
-9. Commit and push. Reconcile applies this desired state in your workspace.
+2. Set required secret keys in `agentspec/environments/default.yaml` to match your workspace secrets.
+3. Adjust agent defaults in `agentspec/agents/*.yaml` (harness, model, prompt paths).
+4. Define tool contracts in `agentspec/tools/*.yaml` (builtin/local/connector) and align them with runtime tools.
+5. For local tools, set `spec.modulePath` to an existing `tools/*.tool.ts|js|mjs` module.
+6. Update `agentspec/automations/triage-issues.yaml` with the right labels, `environmentKey`, and optional `target.repo`.
+7. Remove or edit starter tool and automation examples before production use.
+8. Commit and push. Reconcile applies this desired state in your workspace.
 
 ## Rules to keep valid
 
@@ -30,15 +29,14 @@ Starter agentspace repository that follows the current AgentSpec layout used by 
 - Exactly one default environment should be marked with `spec.isDefault: true`.
 - Exactly one default agent definition per role should be marked with `spec.isDefault: true`.
 - Prompt paths in agent specs must exist in `prompts/`.
+- Repositories are not declared in agentspec. Connect them through GitHub, then target them from automations with `spec.target.repo` when needed.
 
 ## Starter keys and cross-references
 
 - Workspace key: `workspace`
-- Repo key: `app`
-- Environment key: `dev`
+- Environment key: `default`
 - Agent keys: `orchestrator`, `delegator`, `executor`
-- Workflow key: `default`
-- Tool keys: `find-bugs`
+- Tool keys: `builtins`, `find-bugs`
 - Automation key: `triage-issues`
 - Skill key: `code-review`
 
